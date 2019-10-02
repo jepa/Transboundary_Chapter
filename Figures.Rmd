@@ -1,0 +1,888 @@
+---
+title: "R Notebook"
+output:
+  html_notebook:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+---
+
+# Set up
+
+First make sure to install and load all packages needed. This chunk will also load functions related to the analysis.
+
+```{r setup, eval=T, echo=T, warning=F,message=F, results='hide'}
+
+
+# Load libraries and functions #
+
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+
+
+#### Library ####
+packages <- c(
+  "readxl", # Read dataframe in excel format
+  "dplyr", # Data manipulation
+  "tidyr", # Data manipulation
+  "ggplot2", #Nice grpahs and spatial analysis
+  # "cowplot",
+  # "forcasts",
+  # "rgdal",
+  # "RColorBrewer",
+  "knitr",
+  "kableExtra",
+  "data.table", # Fast read data
+  # "ggrepel",
+  # "gridExtra",
+  # "ggmap",
+  # "rgeos",
+  "sf",
+  # "sp",
+  # "rgdal", #Spatial analysis
+  "tools", #Spatial analysis
+  # "png", # For reading plots in chunk codes
+  # "grid" # For reading plots in chunk codes
+  "stringr" # For filtering by string
+)
+
+ipak(packages)
+
+##__________________FUNCTIONS _________________________##
+
+# Standarization of plots
+ggtheme_plot <- function() {
+  theme(
+    plot.title = element_text(size = rel(1), hjust = 0, face = "bold"),
+    panel.background = element_blank(),
+    strip.background = element_blank(),
+    # strip.text       = element_text(size = base_size, face = "italic"),
+    panel.border     = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(size = 10,
+                               angle = 0,
+                               face = "plain"),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.key = element_rect(colour = NA, fill = NA),
+    legend.position  = "top",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 14),
+    strip.text.x = element_text(size = 18, colour = "darkgrey"),
+    strip.text = element_text(size = 18)
+  )
+}
+
+# Standarization of maps
+ggtheme_map <- function(base_size = 9, Region = "NA") {
+  
+  theme(text             = element_text(#family = "Helvetica",
+    color = "gray30", size = base_size),
+    plot.title       = element_text(size = rel(1.25), hjust = 0, face = "bold"),
+    panel.background = element_blank(),
+    panel.border     = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "transparent"),
+    strip.background =element_rect(fill = "transparent"),
+    strip.text.x = element_text(size = 18, colour = "black",face= "bold.italic", angle = 0),
+    axis.line        = element_blank(), # element_line(colour = "grey30", size = .5))
+    axis.ticks       = element_blank(),
+    axis.text        = element_blank(),
+    axis.title       = element_blank(),
+    # legend.key       = element_rect(colour = NA, fill = NA, size = 4),
+    legend.position = "bottom"#,
+    # legend.key.width =unit(6,"line")
+  )
+}
+
+```
+
+# Overall Map
+
+## Loading DBEM data
+
+```{r Load_DBEM_Data, echo = T, eval = T, results='hide', warning=F,message=F}
+
+# List of DBEM INDEX within the EEZ
+#Data provided by Vicki Lam
+EEZIDs_List <- read_excel("~/Documents/UBC/Oceans_Project/Distribution/By Cell/Cell_Data/Updated_EEZList_17June2016.xlsx")
+EEZ_CellID <- read_excel("~/Documents/UBC/Oceans_Project/Distribution/By Cell/Cell_Data/EEZ_CellID.xlsx")
+
+colnames(EEZ_CellID) <- c("EEZID","INDEX")
+
+# DBEM Coordinate system
+Coor <- fread("~/Documents/UBC/Oceans_Project/Distribution/DBEM/Data/Lon_Lat_DBEM.txt",header = FALSE)
+colnames(Coor) <- c("INDEX","Longitude","Latitude")
+
+# Exploited Species for common names
+# exploited_species_list <- fread("/Volumes/DATA/PROJECTION exploited species ENM/exploited_species_list.csv") %>% 
+#   select(Species =TaxonName,
+#          CommonName)
+
+# From (/Users/jpalacios/Documents/UBC/Oceans_Project/Distribution/By Cell/By_Cell_Analysis.Rmd)
+DBEM_Results <- data.table::fread("~/Documents/UBC/Oceans_Project/Manuscript/Data/Raw_Data.csv")
+
+#### All North America ####
+
+EEZs <- c(
+  "Canada (Pacific)",
+  "USA (West Coast)",
+  "USA (Alaska, Arctic)",
+  "USA (Alaska, Subarctic)",
+  # "Canada (Arctic)",
+  "Canada (East Coast)",
+  "USA (East Coast)"
+)
+
+All_EEZs <- EEZIDs_List %>% 
+  filter(Name %in% EEZs) %>% 
+  left_join(EEZ_CellID,
+            by = "EEZID")
+
+names(All_EEZs)[3] <- "INDEX"
+
+```
+
+
+## Data Wrangling
+
+ - We need to make some corrections to the shapefile to project everything with North America centered. Basically solve for the fact that Alaska is in the other side of the globe because the Earth is round, shocking! 
+
+- We also have to include a column referencing the country's EEZ for the analysis
+
+
+```{r Correct_DBEM_Data, echo = T, eval = T, warning=F,message=F, results='asis'}
+
+# LAT LONG Corrections for map projection
+
+DBEM_Corrected <- DBEM_Results %>% 
+  filter(INDEX %in% All_EEZs$INDEX) %>% 
+  filter(Longitude > 0) %>% 
+  mutate(Longitude = Longitude - 360)
+
+DBEM_Corrected <- DBEM_Results %>% 
+  filter(INDEX %in% All_EEZs$INDEX) %>% 
+  filter(Longitude < 0) %>% 
+  bind_rows(DBEM_Corrected)
+
+# head(DBEM_Corrected)
+
+# Just checking #####
+
+# DBEM_Corrected %>%
+#   group_by(INDEX, Longitude, Latitude) %>%
+#   summarise(n =n()) %>%
+#   ggplot(.,
+#          aes(x = Longitude,
+#              y = Latitude,
+#              fill = n
+#          ),
+#          size = 0.05,
+#          alpha = 0.5) +
+#   geom_tile() #+
+# coord_map(projection = "mercator")
+
+
+### Get ridd of any Pacific Species in NAFO
+
+NAFO_E <- DBEM_Corrected %>% 
+  filter(Longitude >= -100)
+
+Pacific <- DBEM_Corrected %>% 
+  filter(Treaty != "NAFO")
+
+DBEM_Corrected <- NAFO_E %>% 
+  bind_rows(Pacific)
+
+# unique(DBEM_Corrected$Species)
+
+# Remove salmons...
+
+Salmons <- c("Oncorhynchus keta","Oncorhynchus kisutch","Oncorhynchus nerka","Oncorhynchus tshawytscha","Oncorhynchus gorbuscha","Salmo salar")
+
+Chapter_Data <- DBEM_Corrected %>%
+  # filter(!Species %in% Salmons) %>% # Reomve or only analysis with salmons
+  left_join(All_EEZs,
+            by ="INDEX") %>% 
+  select(-EEZID)
+
+# Show table with species 
+
+# names(Chapter_Data)
+# head(Chapter_Data)
+
+Chapter_Data %>% 
+  group_by(Species, Treaty) %>% 
+  summarise(n=n()) %>% 
+  ungroup() %>% 
+  left_join(exploited_species_list,
+            by = "Species") %>% 
+  arrange(Treaty) %>% 
+  select(Species,CommonName,Treaty) %>% 
+  kable()
+
+```
+
+## Loading Spatial data
+
+```{r, Load_Spatial_Data, eval = T, echo = T}
+
+# Countries included 
+
+Countries <- c("Canada","United States","Alaska")
+
+
+# World shapefile
+path_world <- "~/Documents/R Code/Spatial_Analysis/Data/TM_WORLD_BORDERS-0.3"
+file_name <- "TM_WORLD_BORDERS"
+
+World_Land_sf <- st_read(dsn = path_world, 
+                         layer = file_path_sans_ext(file_name)
+) %>% 
+  st_transform(crs = 3832)
+
+North_America_Land <- World_Land_sf %>% 
+  filter(NAME %in% Countries)
+
+# Checkpoint 
+# unique(North_America_Land$NAME) [1] Canada        Greenland     United States
+
+# Map it? Yup!
+# ggplot(North_America_Land) +
+# geom_sf()
+
+# EEZs shapefile ####
+
+path_eez<- ("~/Documents/R Code/Spatial_Analysis/Data/World_EEZ_v10_2018")
+#The File
+fnam_eez <- "eez_boundaries_v10.shp" # Just lines
+# fnam_eez <- "eez_v10.shp" # Actual shapefiles (takes 4-ever, for ever ever? fooor eever eeever!?)
+
+eez_world_sf <- st_read(dsn = path_eez, 
+layer = file_path_sans_ext(fnam_eez)
+) %>% 
+  st_transform(crs = 4326) #3832 centered
+
+# head(eez_world_sf)
+
+#Checkpoint  
+# unique(eez_world_sf$Territory1) 
+
+# North_America_EEZ <- eez_world_sf %>% 
+#   filter(Territory1 %in% Countries) %>% 
+#   st_transform(crs = 4326)
+
+#Checkpoint
+# unique(North_America_EEZ$Territory1)
+# Map it? 
+# ggplot(North_America_EEZ) +
+#   geom_sf()
+# Nope, Alaska is not showing up. Neither East Greenland
+
+# Greenland Shapefile Bug ####
+# First lets get all of greenalnd in the map... 
+# 
+# eez_world_sf %>%
+#   filter(str_detect(Territory1,"Canada")) %>%
+#   # mutate(Basin = ifelse( x_1 >= -100, "Atlantic","Pacific")) %>%
+#   head()
+#   ggplot() +
+#   # geom_sf(aes(fill = Basin))
+#   geom_sf()
+# 
+# 
+# 
+# # The chunk missing is from Iceland
+# Iceland <-  eez_world_sf %>% 
+#   # group_by(Territory1) %>% 
+#   # summarise(n()) %>% 
+#   # filter(str_detect(Territory1,"Iceland")) # %>% 
+#   filter(Line_ID ==135)
+#   # ggplot() +
+#   # geom_sf()
+# 
+# eez_world_sf %>%
+#   filter(str_detect(Territory1,"Greenland") |
+#          Line_ID == 135) %>% # Include this in final map plot
+#   ggplot() +
+#   geom_sf() #+
+#   # geom_sf(data = Iceland)
+# 
+# # Alaska Shapefile Bug ####
+# eez_world_sf %>% 
+#   filter(Territory1 %in% Countries) %>% 
+#   st_transform(crs = 3832) %>% 
+#   ggplot() +
+#   geom_sf()
+#   
+# # The chunk missing is from Russia
+# eez_world_sf %>%
+#   filter(str_detect(Territory1,"Alaska") |
+#            MRGID_Ter2 == 8684) %>% # This includes Russia side (Include in final plot)
+#   st_transform(crs = 3832) %>%
+#   # View()
+#   ggplot() +
+#   geom_sf(aes(col=Line_type))
+# 
+# 
+# # South US (Atlantic) Shapefile Bug ####
+# 
+# # The chunk missing is from ... Mexico and Cuba?... and Bahamas. Nope, just Mexico
+# eez_world_sf %>%
+#   # filter(str_detect(Territory1"United States")) %>% 
+#   filter(Territory1 %in% c ("United States", "Mexico", "Cuba","Bahamas"))
+# 
+# 
+# ### Mexico First (Taht's it! )
+# 
+# eez_world_sf %>%
+#   # filter(str_detect(Territory1"United States")) %>% 
+#   filter(Territory1 %in% c ("United States") |
+#          MRGID_Ter2 == 2204) %>%  # Inlcude this for Mexico's southern boundary
+#   # st_transform(crs = 3832) %>%
+#   # View()
+#   ggplot() +
+#   geom_sf(aes(col=Line_type))
+
+
+#### The Actual Map ####
+
+# We need to inlcude alaska in here
+Countries <- c("Canada","United States", "Alaska")
+
+# Here we go again
+North_America_EEZ <- eez_world_sf %>% 
+  filter(Territory1 %in% Countries |
+           Line_ID == 135 | # # Line missing from Greenland (Iceland)
+         MRGID_Ter2 == 8684 |
+           MRGID_Ter2 == 2204) %>%  # Line missing from Alaska (Russia)
+  st_transform(crs = 3832)
+
+# Finall check! 
+# ggplot(North_America_EEZ) +
+#   geom_sf()
+
+# Yup! 
+
+# Map both shapefiles to see how it looks
+
+# ggplot() +
+#   geom_sf(data = North_America_Land) +
+#   geom_sf(data = North_America_EEZ)
+
+# Annnnd.... Is... Done!!!!!!!
+
+# But not really because those are lines and we actually need polygons...
+#  Its way easier, they are all there... ¬ ¬ It does take for ever, thou so projection issues should be deal with in the line version. But maybe the line fizes cuz they are polygons? We will see...
+
+North_America_EEZ <- eez_world_sf %>% 
+  filter(Territory1 %in% Countries) %>% 
+  st_transform(crs = 3832) #3832
+
+
+# Let's try this... I think It will take 4-ever
+
+# Shapefile_Map <- ggplot() +
+#   geom_sf(data = North_America_Land) +
+#   geom_sf(data = North_America_EEZ)
+# 
+#   # 6.26pm and 18:34 on carmelia
+#   ggsave("Shapefile_Map.png",
+#          plot = last_plot(),
+#          width = 12,
+#          height = 10,
+#          units = "in"
+#          )
+
+
+### Explorting new dataset, hopefully is faster... ####
+
+path_eez<- ("~/Documents/R CODE/Spatial_Analysis/Data/Intersect_EEZ_IHO_v3")
+#The File
+# fnam_eez <- "eez_boundaries_v10.shp" # Just lines
+fnam_eez <- "EEZ_IHO_v3.shp" # Actual shapefiles (takes 4-ever, for ever ever? fooor eever eeever!?)
+
+new_eez_sf <- st_read(dsn = path_eez, 
+layer = file_path_sans_ext(fnam_eez)
+) #%>% 
+  # st_transform(crs = 4326) #3832 centered
+
+# See map
+# ggplot(new_eez_sf) +
+#   geom_sf()
+
+# head(new_eez_sf)
+
+# new_eez_sf %>% 
+#   filter(Territory1 == "Canada",
+#     Longitude > -100) %>%
+  # tail()
+  # filter(Territory1 == "Canada",
+         # IHO_Sea %in% c("North Atlantic Ocean")) %>% 
+  # head()
+  # ggplot() +
+  # geom_sf()
+
+
+# Canada Pacific (Half arctic sea) <- Longitude < -100
+
+Canada_shp <- new_eez_sf %>% 
+  filter(Territory1 == "Canada") %>% 
+  mutate(Basin = ifelse(Longitude > -100, "Can E","Can W")) %>% 
+  select(Territory1,
+         Basin,
+         geometry)
+
+# head(Canada_shp) yes! 
+
+
+# US Pacific (Half arctic sea) <- Longitude < -100
+
+US_shp <- new_eez_sf %>% 
+  filter(Territory1 == "United States") %>% 
+  mutate(Basin = ifelse(Longitude > -100, "USA E","USA W")) %>% 
+  select(Territory1,
+         Basin,
+         geometry)
+
+# Alaska
+
+Alaska_shp <- new_eez_sf %>% 
+  filter(Territory1 == "Alaska") %>% 
+    mutate(Basin = "Alaska") %>% 
+  select(Territory1,
+         Basin,
+         geometry)
+
+
+# Greenland
+
+# Greenland_shp <- 
+  # new_eez_sf %>% 
+  # filter(Territory1 == "Greenland") %>% 
+  #   mutate(Basin = "Alaska") %>% 
+  # select(Territory1,
+  #        Basin,
+  #        geometry)
+  
+  North_America_EEZ_sp <- Alaska_shp %>% 
+    rbind(US_shp,Canada_shp)
+  
+```
+
+
+## DBEM data analysis for NAFO
+
+```{r Chapter_Function, eval =T, echo=T}
+
+Areas <- c(
+  "Canada (Arctic)",
+  "Canada (East Coast)",
+  "Canada (Pacific)",
+  "USA (East Coast)",
+  "USA (West Coast)",
+  "USA (Alaska, Arctic)",
+  "USA (Alaska, Subarctic)"
+)
+
+RCP = c("GFDL26F1","IPSL26F1","MPI26F1") #Low RCP
+
+Selected_Areas <- EEZIDs_List %>% 
+  filter(Name %in% Areas)
+
+# DBEM_Corrected %>% 
+#   filter(Treaty == "NAFO") %>% 
+#   View()
+
+
+Overall <- DBEM_Corrected %>%
+  left_join(EEZ_CellID,
+            by = "INDEX") %>% 
+  # head() %>%
+  filter(EEZID %in% Selected_Areas$EEZID) %>% 
+  mutate( # uncomment to get overall by nation
+    Nation = ifelse(EEZID >= 958, "Alaska",
+                    ifelse(EEZID == 925,"Can W",
+                           ifelse(EEZID == 851, "USA E",
+                                  ifelse( EEZID== 848, "USA W","Can E"))
+                    )),
+    RCP = ifelse(Model %in% RCP,"Low","High"),
+    Basin = ifelse(Nation %in% c("USA E","Can E"),"Atlantic","Pacific")
+  ) %>% 
+  # View()
+  group_by(Model,Nation,RCP,Basin,Species) %>%
+  summarise_if(is.numeric,sum,na.rm=T) %>%
+  group_by(Nation,RCP,Basin,Species) %>% 
+  summarise_at(vars(`2005`:`2099`),mean,na.rm=T) %>%  #Average of models
+  gather("Year","MCP",`2005`:`2099`)
+
+# Average of each Species MCP today
+
+Today_Mean <- Overall %>% 
+  filter(Year >= 2005 & Year <= 2014) %>% 
+  group_by(Nation,RCP,Species) %>% 
+  summarise(Today_MCP = mean(MCP))
+
+# View(Today_Mean)
+
+#### Change in proportions ####
+
+# Average of each Species MCP today in both nations
+Today_Total_MCP <- Overall %>% 
+  filter(Year >= 2005 & Year <= 2014) %>% 
+  group_by(RCP,Nation,Basin, Species) %>% 
+  summarise(Mean_MCP = mean(MCP)) %>% 
+  group_by(RCP,Basin,Species) %>% 
+  summarise(Total_MCP = sum(Mean_MCP))
+
+
+Today_Proportion <- Overall %>%
+  # mutate(Basin = ifelse(Nation %in% c("USA E","Can E"),"Atlantic","Pacific")) %>% 
+  filter(Year >= 2005 & Year <= 2014) %>% 
+  group_by(Nation,RCP,Basin,Species) %>% 
+  summarise(Today_MCP = mean(MCP)) %>% 
+  left_join(Today_Total_MCP,
+            by = c("RCP","Basin","Species")
+  ) %>% 
+  mutate(
+    Prop_Today = (Today_MCP/Total_MCP)*100
+  ) %>% 
+  select(Nation,RCP,Basin,Prop_Today,Species)
+
+### Check point
+
+# Today_Proportion %>% 
+#   group_by(RCP,Basin) %>% 
+#   summarise(sum(Prop_Today))
+
+### Proportion change ##
+
+Future_Totals <- Overall %>% 
+  filter(Year >= 2046) %>% 
+  mutate(#Basin = ifelse(Nation %in% c("USA E","Can E"),"Atlantic","Pacific"),
+         Period = (ifelse(Year >= 2046 & Year <= 2055,"Mid Century","End Century"))
+) %>% 
+  # filter(Year >= 2046 & Year <= 2055) %>% 
+  group_by(RCP,Nation,Basin,Period,Species) %>% 
+  summarise(Mean_MCP = mean(MCP)) %>% 
+  group_by(RCP,Basin,Period,Species) %>% 
+  summarise(Total_MCP_Fut = sum(Mean_MCP))
+
+Result_Table <- Overall %>%
+  mutate(#Basin = ifelse(Nation %in% c("USA E","Can E"),"Atlantic","Pacific"),
+         Period = ifelse(Year >= 2046 & Year <= 2055,"Mid Century",
+                          ifelse(Year >= 2090 & Year <= 2099,"End Century","Other_Years"))
+                   ) %>% 
+  filter(Period != "Other_Years") %>%
+  group_by(Nation,RCP,Basin,Period,Species) %>% 
+  summarise(Fut_MCP = mean(MCP)) %>% 
+  # View()
+  left_join(Future_Totals,
+            by = c("RCP","Basin","Period","Species")
+  ) %>% 
+  mutate(
+    Prop_Fut = (Fut_MCP/Total_MCP_Fut)*100
+  ) %>% 
+  left_join(Today_Proportion,
+            by = c("Nation","RCP","Basin","Species")) %>% 
+  mutate(Change = Prop_Fut/Prop_Today,
+         Percentage_Mid = round(-(1-Change)*100)
+  ) %>% 
+  View()
+  # select(Species,Nation:Period,Percentage_Mid) %>%
+  group_by(Nation,RCP,Period) %>%
+  summarise(
+    Mean_All = mean(Percentage_Mid, na.rm = T),
+    sd_All = sd(Percentage_Mid, na.rm = T)
+  ) %>%
+  View()
+
+
+Result_Map <- Result_Table  %>% 
+  filter(RCP == "High",
+         Period == "Mid Century") %>% 
+  ungroup() %>% 
+  select(
+    Basin= Nation,
+    Mean_All
+    )
+
+  # COnvert DBEM data to a shapefile (points)
+  Mid_Century_Plot <- North_America_EEZ_sp %>% 
+    left_join(Result_Map,
+              by ="Basin") %>% 
+    st_transform(crs = 3832)
+  
+  # head(Mid_Century_Plot)
+  # tail(Mid_Century_Plot)
+  # unique(Mid_Century_Plot$)
+  
+  
+  #### Map checking #### Works!!!!
+  
+  Seq <- seq(-12,12,2)
+  
+  Plot <- ggplot(Mid_Century_Plot) +
+    geom_sf(aes(fill = Mean_All,
+                colour=Mean_All)) +
+    scale_fill_gradient2(
+      limits=c(-12,12),
+      breaks = Seq ) +
+    scale_colour_gradient2(
+      limits=c(-12,12),
+      breaks = Seq) +
+    # geom_sf(data = North_America_Land) +
+    # geom_sf(data = North_America_EEZ, colour = "black") +
+    ggtheme_map() +
+    theme(legend.key = element_rect(size = 4),
+      legend.key.width =unit(6,"line"));Plot
+    
+  # ggsave("Mid_Century.png", #03:24
+  #        plot = Plot,
+  #        width = 12,
+  #        height = 10,
+  #        units = "in"
+  #        )
+  
+
+```
+
+
+# Chinook Map
+
+```{r Chinook_data, eval = T}
+
+chinook_data <- read.csv("~/Documents/UBC/Transboundary_Canada_Chapter/chinook_data.csv", comment.char="#")
+
+# Explore! 
+min(chinook_data$X.1, na.rm=T)
+unique(chinook_data$X.1)
+names(chinook_data)[1:5]
+View(head(chinook_data))
+unique(chinook_data$`AABM Fishery..8`)
+
+# Arrange mixed up data
+AABM_SEAK_N <- chinook_data %>% 
+  gather("Erraseme","AABM_SEAK_N",`AABM Fishery..5`:`AABM Fishery..8`) %>% 
+  filter(!is.na(AABM_SEA_N)) %>% 
+  mutate(Region = "SEAK",
+         Gear = "N") %>% 
+  select(1:2,Region,Gear,AABM_SEAK_N)
+
+AABM_SEAK_S <- chinook_data %>% 
+  gather("Erraseme","AABM_SEAK_S",`AABM Fishery..9`:`AABM Fishery..13`) %>% 
+  filter(!is.na(AABM_SEAK_S)) %>% 
+  select(1:2,AABM_SEAK_S)
+
+ISBM_NBC_T <- chinook_data %>% 
+gather("Erraseme","ISBM_NBC_T",ISBM_Fishery..14:ISBM_Fishery..17) %>% 
+  filter(!is.na(ISBM_NBC_T)) %>% 
+  select(1:2,ISBM_NBC_T)
+
+ISBM_NBC_S <- chinook_data %>% 
+  gather("Erraseme","ISBM_NBC_S",ISBM_Fishery..18:ISBM_Fishery..21) %>% 
+  filter(!is.na(ISBM_NBC_S)) %>% 
+  select(1:2,ISBM_NBC_S)
+
+ISBM_WCVI_T <- chinook_data %>% 
+  gather("Erraseme","ISBM_WCVI_T",ISBM_Fishery..22:ISBM_Fishery..25) %>% 
+  filter(!is.na(ISBM_WCVI_T)) %>% 
+  select(1:2,ISBM_WCVI_T)
+
+  
+# Create new variables for dataset
+
+Col_Names <- c(
+  "Year",
+  "Est",
+  "Agesa",
+  "Agesb",
+  paste("SEAK-",letters,sep="")[1:8],
+  paste("NBC-",letters,sep="")[1:7],
+  paste("WCVI-",letters,sep="")[1:5],
+  paste("NBC_CBC-",letters,sep="")[1:10],
+  paste("SBC-",letters,sep="")[1:10],
+  paste("Falcon-",letters,sep="")[1:11],
+  paste("WAC-",letters,sep="")[1:3],
+  paste("Puget_Sd-",letters,sep="")[1:7],
+  paste("Terminal_Seak-",letters,sep="")[1:7],
+  paste("Terminal_Canada-",letters,sep="")[1:6],
+  paste("Terminal_SUS-",letters,sep="")[1:9],
+  paste("Stray-",letters,sep="")[1:4],
+  paste("Esc-",letters,sep="")[1:8]
+)
+  
+Places <- c(
+  "Alaska Spring (Alaska South SE)", 
+  "Atnarko River (North/Central BC) total fishing mortalities",
+  "Atnarko River (North/Central BC) 5-age ERA output total",
+  "Atnarko Yearling (North/Central BC) total fishing mortalities",
+  "Atnarko Yearling (North/Central BC) 5-age ERA output total",
+  "Big Qualicum River Fall (Lower Strait of Georgia Hatchery and Natural)",
+  "Chilliwack River Fall (Fraser Late)",
+  "Chilkat River",
+  "Cowichan River Fall (Lower Strait of Georgia Natural)",
+  "Cowlitz Fall Tule (Fall Cowlitz Hatchery)",
+  "Dome Creek Spring (Fraser Early)",
+  "Elk River (Oregon Coast)",
+  "Elwha River",
+  "George Adams Fall Fingerling",
+  "Hanford Wild Brights",
+  "Harrison River (Fraser Late)",
+  "Hoko Fall Fingerling",
+  "Kitsumkalum River Summer (North/Central BC)",
+  "Kitsumkalum Yearling (North/Central BC)",
+  "Lower River Hatchery Tule (Lower Bonneville Hatchery)",
+  "Lewis River Wild (Lewis River Wild)",
+  "Lyons Ferry (Lyons Ferry Hatchery)",
+  "Lyons Ferry Yearling",
+  "Middle Shuswap River Summer (Fraser Early)",
+  "Nanaimo River Fall (Lower Strait of Georgia Natural)",
+  "Nicola River Spring (Fraser Early)",
+  "Nisqually Fall Fingerling",
+  "Nooksack Spring Yearling (Nooksack Spring Yearling)",
+  "Nooksack Spring Fingerling (Nooksack Spring Yearling)",
+  "Phillips River Fall (Upper Strait of Georgia)",
+  "Puntledge River Summer (Lower Strait of Georgia Hatchery)",
+  "Queets Fall Fingerling (Washington Coastal Wild)",
+  "Quinsam River Fall (Upper Strait of Georgia)",
+  "River Fall (Upper Strait of Georgia) 5-age ERA",
+  "Robertson Creek Fall (WCVI Hatchery and Natural)",
+  "Samish Fall Fingerling (Nooksack Fall Fingerling)",
+  "Lower Shuswap River Summer (Fraser Early)",
+  "Skagit Spring Fingerling",
+  "Skagit Spring Yearling",
+  "Skykomish Fall Fingerling (Snohomish Wild)",
+  "Sooes (now Tsoo-Yess) Fall Fingerling (Washington Coastal Wild)",
+  "Spring Creek Tule (Spring Creek Hatchery)",
+  "South Puget Sound Fall Fingerling (Puget Sound Hatchery Fingerling)",
+  "South Puget Sound Fall Yearling (Puget Sound Hatchery Yearling)",
+  "Squaxin Pens Fall Yearling (Puget Sound Hatchery Yearling)",
+  "Salmon River (Oregon Coast)",
+  "Skagit Summer Fingerling (Skagit Wild)",
+  "Stikine River",
+  "Stillaguamish Fall Fingerling (Stillaguamish Wild)",
+  "Columbia River Summers (Columbia River Summer)",
+  "Taku River",
+  "Unuk River",
+  "Columbia River Upriver Bright (Columbia River Upriver Brights)",
+  "University Of Washington Accelerated",
+  "White River Spring Yearling",
+  "Willamette Spring (Willamette River Hatchery)"
+)
+
+Rivers <- c(
+  "Alaska Spring", 
+  "Atnarko",
+  "Atnarko",
+  "Atnarko",
+  "Atnarko",
+  "Big Qualicum",
+  "Chilliwack",
+  "Chilkat",
+  "Cowichan",
+  "Cowlitz",
+  "Dome Creek Spring",
+  "Elk",
+  "Elwha",
+  "George Adams",
+  "Hanford",
+  "Harrison",
+  "Hoko",
+  "Kitsumkalum",
+  "Kitsumkalum",
+  "Lower",
+  "Lewis",
+  "Lyons Ferry",
+  "Lyons Ferry",
+  "Middle Shuswap",
+  "Nanaimo",
+  "Nicola",
+  "Nisqually",
+  "Nooksack",
+  "Nooksack",
+  "Strait of Georgia",
+  "Strait of Georgia",
+  "Queets",
+  "Strait of Georgia",
+  "Strait of Georgia",
+  "Robertson Creek",
+  "Samish",
+  "Shuswap",
+  "Skagit",
+  "Skagit",
+  "Skykomish",
+  "Sooes (now Tsoo-Yess)",
+  "Spring Creek",
+  "Puget Sound",
+  "Puget Sound",
+  "Puget Sound",
+  "Salmon",
+  "Skagit",
+  "Stikine",
+  "Stillaguamish",
+  "Columbia",
+  "Taku",
+  "Unuk",
+  "Columbia",
+  "University of Washington Accelerated",
+  "White",
+  "Willamette"
+)
+
+
+# Re name colums
+colnames(chinook_data) <- Col_Names
+
+Clean_Chinook <- chinook_data %>% 
+  filter(Year == 2016) %>% 
+  mutate(Source = Places,
+         River = Rivers) %>% 
+  gather("Regions","Value",5:88) %>% 
+  select(Year,River,Regions,Value) %>% 
+  mutate(Regions = gsub("\\-.*","",Regions),
+         Value = as.numeric(Value)
+  ) %>% 
+  group_by(River,Regions,Year) %>% 
+  summarise(Per_Region = sum(Value,na.rm=T)) %>% 
+  filter(Per_Region > 0) %>% 
+  mutate(State = ifelse(Regions %in% BC_Regions, "BC",
+                        ifelse(Regions %in% Al_Regions,"Alaska","US_Mainlyand")))
+
+
+# Please make no-place over 100%
+# Non is over 100%
+
+Places_per <- Chiiii %>% 
+  group_by(River) %>% 
+  summarise(sum(Per_Region,na.rm=T))
+
+
+
+
+
+
+```
+
+
+```{r plot_chinook, eval =T}
+
+
+ggplot(Chiiii) +
+  geom_bar(aes(
+    x = Regions,
+    y = Per_Region,
+    fill = Regions
+  ),
+  stat = "identity"
+  ) +
+  facet_wrap(~ River) +
+  coord_polar("y", start=0)
+```
+
