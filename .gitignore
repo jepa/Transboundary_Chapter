@@ -3,4 +3,5 @@
 .RData
 .Ruserdata
 ./Data/*
-./Manuscript/*
+./Text/*
+./Figures/Supporting_info.pptx

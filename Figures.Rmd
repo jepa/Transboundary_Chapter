@@ -653,236 +653,277 @@ Result_Map <- Result_Table  %>%
 
 ```
 
-
 # Chinook Map
 
-```{r Chinook_data, eval = T}
+```{r chinook_map, eval = T}
 
-chinook_data <- read.csv("~/Documents/UBC/Transboundary_Canada_Chapter/chinook_data.csv", comment.char="#")
+# libraries needed
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+library(rnaturalearth)
+library(sf)
+library(wesanderson)
+source("./Functions/get_data_fx.R")
 
-# Explore! 
-min(chinook_data$X.1, na.rm=T)
-unique(chinook_data$X.1)
-names(chinook_data)[1:5]
-View(head(chinook_data))
-unique(chinook_data$`AABM Fishery..8`)
+#### Data Source ###
+# Data shared by Mark McMillan thanks to Catherine Micielsens from PSC
+# Reference info
+# If the 2018 report is not yet published it might be better to referrer
+# the Chinook Technical Committee of the Pacific Salmon Commission as the source.
 
-# Arrange mixed up data
-AABM_SEAK_N <- chinook_data %>% 
-  gather("Erraseme","AABM_SEAK_N",`AABM Fishery..5`:`AABM Fishery..8`) %>% 
-  filter(!is.na(AABM_SEA_N)) %>% 
-  mutate(Region = "SEAK",
-         Gear = "N") %>% 
-  select(1:2,Region,Gear,AABM_SEAK_N)
+#________________________________________________________________________________#
 
-AABM_SEAK_S <- chinook_data %>% 
-  gather("Erraseme","AABM_SEAK_S",`AABM Fishery..9`:`AABM Fishery..13`) %>% 
-  filter(!is.na(AABM_SEAK_S)) %>% 
-  select(1:2,AABM_SEAK_S)
+# Manually create fisheries labels for fixing data
 
-ISBM_NBC_T <- chinook_data %>% 
-gather("Erraseme","ISBM_NBC_T",ISBM_Fishery..14:ISBM_Fishery..17) %>% 
-  filter(!is.na(ISBM_NBC_T)) %>% 
-  select(1:2,ISBM_NBC_T)
+Fishery_Set <- c(
+  rep("SEK",3),
+  rep("NBC",2),
+  rep("WCVI",2),
+  rep("NBC&CB",3),
+  rep("SBC",3),
+  rep("NF",2),
+  rep("SF",2),
+  rep("WAK",1),
+  rep("PUG",2),
+  rep("SEK",3),
+  rep("CAN",2),
+  rep("SUS",3),
+  "Stray",
+  "Esc"
+)
 
-ISBM_NBC_S <- chinook_data %>% 
-  gather("Erraseme","ISBM_NBC_S",ISBM_Fishery..18:ISBM_Fishery..21) %>% 
-  filter(!is.na(ISBM_NBC_S)) %>% 
-  select(1:2,ISBM_NBC_S)
+# Create tabel relation
+Fishery_to_Country <- tibble(
+  Fishery = c("SEK","NBC","WCVI","NBC&CB","SBC","NF","SF","WAK","PUG","CAN","SUS","Stray","Esc"),
+  Fishing_Country = c("US Alaska",rep("Canada",4),rep("US Contiguous States",2),rep("US Contiguous States",2),"Canada","US Contiguous States","Stray","Esc")
+)
 
-ISBM_WCVI_T <- chinook_data %>% 
-  gather("Erraseme","ISBM_WCVI_T",ISBM_Fishery..22:ISBM_Fishery..25) %>% 
-  filter(!is.na(ISBM_WCVI_T)) %>% 
-  select(1:2,ISBM_WCVI_T)
+# Load Fishery Acronyms
 
+Acronyms <- read_excel("Data/2018 Chinook Total Mortality Distribution.xlsx",
+                       sheet = "Fisheries", col_names = TRUE) %>% 
+  arrange(Region) %>% 
+  mutate(Sheet = paste(StockAcronym,"total mort")) %>% 
+  mutate(Country = c(rep("US Contiguous States",22),rep("Canada",4),rep("US Contiguous States",18),rep("US Alaska",3),rep("Transboundary",2),"Canada",rep("US Contiguous States",4))
+  )
+
+
+
+# Run function to get all Data
+suppressMessages(
+  Chinook_Data <- bind_rows(
+    lapply(Acronyms$Sheet,get_chinook_data)
+  )
+) 
+
+
+Total_Region_Catch <- Chinook_Data %>% 
+  group_by(Region) %>% 
+  summarise(Total_Reg_Catch = sum(Catch_Country,na.rm=T)) %>% 
+  filter(!is.na(Region))
+
+Regional_Coord <- tibble(
+  Region = unique(Total_Region_Catch$Region),
+  Lon = c(122,123,132.9,137,122,145,140,128,128),
+  Lat = c(43.5,53,50.4,54,48,57,48,48,43.5)
+)
+
+Chinook_Per_Region <- Chinook_Data %>% 
+  group_by(Fishing_Country,Region) %>% 
+  summarise(Total_Country_Catch = sum(Catch_Country,na.rm=T)) %>% 
+  left_join(Total_Region_Catch, 
+            by = "Region") %>% 
+  mutate(Region_per = (Total_Country_Catch/Total_Reg_Catch)*100) %>% 
+  filter(!is.na(Region)) %>% 
+  left_join(Regional_Coord)
+
+# Plot Pie charts
+# ggplot(Chinook_Per_Region) +
+#   geom_bar(
+#     aes(
+#       x = "",
+#       y = Region_per,
+#       fill = Fishing_Country
+#     ),
+#     stat ="identity"
+#   ) +
+#   coord_polar("y", start=0) +
+#   facet_wrap(~Region)
+
+
+#### The Map
+
+### Give coord for map
+
+Test <- Chinook_Per_Region %>% 
+  select(Region,Fishing_Country,Region_per) %>% 
+  spread(Fishing_Country,Region_per) %>% 
+  left_join(Regional_Coord) %>% 
+  mutate(Lon = Lon*-1,
+         radius = 3)
+
+
+#### Option C
+# Map Dimenssions
+xmin=-121
+xmax=-150
+ymin=33
+ymax=63
+
+world = map_data("world", resolution=0)
+
+p <- ggplot(world, aes(long, lat)) +
+  geom_map(map=world, aes(map_id=region), 
+           fill=wes_palette(name = "IsleofDogs2")[1],
+           # fill = "grey90",
+           color="black",
+           size = 0.1) +
+  coord_quickmap(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  theme(
+    panel.grid = element_blank(),
+    # panel.grid.major = element_line(color = "gray90",
+                                    # linetype = "dashed",
+                                    # size = 0.5),
+    # panel.grid.minor = element_line(color = "gray90",
+    #                                 linetype = "dashed",
+    #                                 size = 0.5),
+    # panel.grid.minor = element_blank(),
+    # panel.background = element_blank()
+      panel.background = element_rect(fill = wes_palette(name = "Darjeeling2")[4])
+  )
   
-# Create new variables for dataset
+# Make magic for Pie not to be distorted
+# https://stackoverflow.com/questions/51398344/r-pie-charts-distorted-when-adding-to-projected-map-using-ggplot
 
-Col_Names <- c(
-  "Year",
-  "Est",
-  "Agesa",
-  "Agesb",
-  paste("SEAK-",letters,sep="")[1:8],
-  paste("NBC-",letters,sep="")[1:7],
-  paste("WCVI-",letters,sep="")[1:5],
-  paste("NBC_CBC-",letters,sep="")[1:10],
-  paste("SBC-",letters,sep="")[1:10],
-  paste("Falcon-",letters,sep="")[1:11],
-  paste("WAC-",letters,sep="")[1:3],
-  paste("Puget_Sd-",letters,sep="")[1:7],
-  paste("Terminal_Seak-",letters,sep="")[1:7],
-  paste("Terminal_Canada-",letters,sep="")[1:6],
-  paste("Terminal_SUS-",letters,sep="")[1:9],
-  paste("Stray-",letters,sep="")[1:4],
-  paste("Esc-",letters,sep="")[1:8]
-)
+pie.list <- Test %>% 
+  tidyr::gather(type, value, -Lon, -Lat, -radius, -Region) %>%
+  tidyr::nest(type, value) %>%
+  # make a pie chart from each row, & convert to grob
+  mutate(pie.grob = purrr::map(data,
+                               function(d) ggplotGrob(ggplot(d, 
+                                                             aes(x = 1, y = value, fill = type)) +
+                                                        geom_col(color = "black",
+                                                                 show.legend = FALSE) +
+                                                        coord_polar(theta = "y") +
+                                                        scale_fill_manual("Fishing Entity",
+                                                                          values = c(wes_palette(name = "Darjeeling1")[2:5]
+                                                                          )
+                                                        ) +
+                                                        theme_void()))) %>%
   
-Places <- c(
-  "Alaska Spring (Alaska South SE)", 
-  "Atnarko River (North/Central BC) total fishing mortalities",
-  "Atnarko River (North/Central BC) 5-age ERA output total",
-  "Atnarko Yearling (North/Central BC) total fishing mortalities",
-  "Atnarko Yearling (North/Central BC) 5-age ERA output total",
-  "Big Qualicum River Fall (Lower Strait of Georgia Hatchery and Natural)",
-  "Chilliwack River Fall (Fraser Late)",
-  "Chilkat River",
-  "Cowichan River Fall (Lower Strait of Georgia Natural)",
-  "Cowlitz Fall Tule (Fall Cowlitz Hatchery)",
-  "Dome Creek Spring (Fraser Early)",
-  "Elk River (Oregon Coast)",
-  "Elwha River",
-  "George Adams Fall Fingerling",
-  "Hanford Wild Brights",
-  "Harrison River (Fraser Late)",
-  "Hoko Fall Fingerling",
-  "Kitsumkalum River Summer (North/Central BC)",
-  "Kitsumkalum Yearling (North/Central BC)",
-  "Lower River Hatchery Tule (Lower Bonneville Hatchery)",
-  "Lewis River Wild (Lewis River Wild)",
-  "Lyons Ferry (Lyons Ferry Hatchery)",
-  "Lyons Ferry Yearling",
-  "Middle Shuswap River Summer (Fraser Early)",
-  "Nanaimo River Fall (Lower Strait of Georgia Natural)",
-  "Nicola River Spring (Fraser Early)",
-  "Nisqually Fall Fingerling",
-  "Nooksack Spring Yearling (Nooksack Spring Yearling)",
-  "Nooksack Spring Fingerling (Nooksack Spring Yearling)",
-  "Phillips River Fall (Upper Strait of Georgia)",
-  "Puntledge River Summer (Lower Strait of Georgia Hatchery)",
-  "Queets Fall Fingerling (Washington Coastal Wild)",
-  "Quinsam River Fall (Upper Strait of Georgia)",
-  "River Fall (Upper Strait of Georgia) 5-age ERA",
-  "Robertson Creek Fall (WCVI Hatchery and Natural)",
-  "Samish Fall Fingerling (Nooksack Fall Fingerling)",
-  "Lower Shuswap River Summer (Fraser Early)",
-  "Skagit Spring Fingerling",
-  "Skagit Spring Yearling",
-  "Skykomish Fall Fingerling (Snohomish Wild)",
-  "Sooes (now Tsoo-Yess) Fall Fingerling (Washington Coastal Wild)",
-  "Spring Creek Tule (Spring Creek Hatchery)",
-  "South Puget Sound Fall Fingerling (Puget Sound Hatchery Fingerling)",
-  "South Puget Sound Fall Yearling (Puget Sound Hatchery Yearling)",
-  "Squaxin Pens Fall Yearling (Puget Sound Hatchery Yearling)",
-  "Salmon River (Oregon Coast)",
-  "Skagit Summer Fingerling (Skagit Wild)",
-  "Stikine River",
-  "Stillaguamish Fall Fingerling (Stillaguamish Wild)",
-  "Columbia River Summers (Columbia River Summer)",
-  "Taku River",
-  "Unuk River",
-  "Columbia River Upriver Bright (Columbia River Upriver Brights)",
-  "University Of Washington Accelerated",
-  "White River Spring Yearling",
-  "Willamette Spring (Willamette River Hatchery)"
-)
+  # convert each grob to an annotation_custom layer. I've also adjusted the radius
+  # value to a reasonable size (based on my screen resolutions).
+  rowwise() %>%
+  mutate(subgrob = list(annotation_custom(grob = pie.grob,
+                                          xmin = Lon - radius, xmax = Lon + radius,
+                                          ymin = Lat - radius, ymax = Lat + radius))
+         )
 
-Rivers <- c(
-  "Alaska Spring", 
-  "Atnarko",
-  "Atnarko",
-  "Atnarko",
-  "Atnarko",
-  "Big Qualicum",
-  "Chilliwack",
-  "Chilkat",
-  "Cowichan",
-  "Cowlitz",
-  "Dome Creek Spring",
-  "Elk",
-  "Elwha",
-  "George Adams",
-  "Hanford",
-  "Harrison",
-  "Hoko",
-  "Kitsumkalum",
-  "Kitsumkalum",
-  "Lower",
-  "Lewis",
-  "Lyons Ferry",
-  "Lyons Ferry",
-  "Middle Shuswap",
-  "Nanaimo",
-  "Nicola",
-  "Nisqually",
-  "Nooksack",
-  "Nooksack",
-  "Strait of Georgia",
-  "Strait of Georgia",
-  "Queets",
-  "Strait of Georgia",
-  "Strait of Georgia",
-  "Robertson Creek",
-  "Samish",
-  "Shuswap",
-  "Skagit",
-  "Skagit",
-  "Skykomish",
-  "Sooes (now Tsoo-Yess)",
-  "Spring Creek",
-  "Puget Sound",
-  "Puget Sound",
-  "Puget Sound",
-  "Salmon",
-  "Skagit",
-  "Stikine",
-  "Stillaguamish",
-  "Columbia",
-  "Taku",
-  "Unuk",
-  "Columbia",
-  "University of Washington Accelerated",
-  "White",
-  "Willamette"
-)
+### Final Map
 
-
-# Re name colums
-colnames(chinook_data) <- Col_Names
-
-Clean_Chinook <- chinook_data %>% 
-  filter(Year == 2016) %>% 
-  mutate(Source = Places,
-         River = Rivers) %>% 
-  gather("Regions","Value",5:88) %>% 
-  select(Year,River,Regions,Value) %>% 
-  mutate(Regions = gsub("\\-.*","",Regions),
-         Value = as.numeric(Value)
-  ) %>% 
-  group_by(River,Regions,Year) %>% 
-  summarise(Per_Region = sum(Value,na.rm=T)) %>% 
-  filter(Per_Region > 0) %>% 
-  mutate(State = ifelse(Regions %in% BC_Regions, "BC",
-                        ifelse(Regions %in% Al_Regions,"Alaska","US_Mainlyand")))
-
-
-# Please make no-place over 100%
-# Non is over 100%
-
-Places_per <- Chiiii %>% 
-  group_by(River) %>% 
-  summarise(sum(Per_Region,na.rm=T))
-
-
-
-
-
-
-```
-
-
-```{r plot_chinook, eval =T}
-
-
-ggplot(Chiiii) +
-  geom_bar(aes(
-    x = Regions,
-    y = Per_Region,
-    fill = Regions
-  ),
-  stat = "identity"
+p + 
+  geom_tile(data = Test %>% tidyr::gather(type, value, -Lon, -Lat, -radius,-Region),
+            aes(x = Lon, y = Lat, fill = type), 
+            color = "black", width = 0.01, height = 0.01, 
+            inherit.aes = FALSE) +
+  
+  pie.list$subgrob +
+  ggrepel::geom_text_repel(data = Test,
+                            aes(
+                              x = Lon,
+                              y = Lat,
+                              label = Region),
+                            force = 5,
+                            size = 3,
+                            nudge_x = 0,
+                            nudge_y = 2.1,
+                            segment.color	= NA
   ) +
-  facet_wrap(~ River) +
-  coord_polar("y", start=0)
+  scale_fill_manual("Fishing Entity",
+                    values = c(wes_palette(name = "Darjeeling1")[2:5]
+                    )
+  ) +
+  scale_x_continuous("Longitude",
+                     breaks = seq(xmax,-120,5)
+                     ) +
+  scale_y_continuous("Latitude",
+                     breaks = seq(30,65,5)
+  ) +
+  annotate("text", 
+           x =-140,
+           y = 36.3,
+           label = "Sharing Chinook Salmon", 
+           color="black", 
+           size=6, 
+           angle=0, 
+           fontface="italic",
+           hjust=0) +
+  annotate("text", 
+           x =-132,
+           y = 34.8,
+           label = "Regional Chinook Salmon Captures per\nFishing Entity Between 2009 and 2017", 
+           color="black", 
+           size=3, 
+           angle=0, 
+           # fontface="italic",
+           hjust=0.5) +
+  theme(
+    legend.position = c(0.18,0.09),
+    legend.background = element_rect(fill = wes_palette(name = "Darjeeling2")[4])
+  )
+
+
+ggsave("Col_Chinook_Map.png",
+       plot = last_plot(),
+       width = 6,
+       height = 8,
+       units = "in")
+
+### Map for migration
+
+xmin=-111
+xmax=-160
+ymin=45
+ymax=63
+
+states <- map_data("state")
+
+ggplot(world, aes(long, lat)) +
+  geom_map(map=world, aes(map_id=region), 
+           fill=wes_palette(name = "IsleofDogs2")[1],
+           # fill = "grey90",
+           color="black",
+           size = 0.1) +
+  geom_polygon(data = states,
+               aes(x = long, y = lat,
+                   group = group), 
+               fill=wes_palette(name = "IsleofDogs2")[1],
+               color = "black",
+               # fill = "grey90",
+               size = 0.1) + 
+  coord_quickmap(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  theme(
+    panel.grid = element_blank(),
+    # panel.grid.major = element_line(color = "gray90",
+    # linetype = "dashed",
+    # size = 0.5),
+    # panel.grid.minor = element_line(color = "gray90",
+    #                                 linetype = "dashed",
+    #                                 size = 0.5),
+    # panel.grid.minor = element_blank(),
+    # panel.background = element_blank()
+    panel.background = element_rect(fill = wes_palette(name = "Darjeeling2")[4])
+  )
+
+ggsave("col_migration_map.png",
+       plot = last_plot(),
+       width = 8,
+       height = 6,
+       units = "in")
+
 ```
+
+
 
