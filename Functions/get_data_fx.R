@@ -5,7 +5,7 @@
 
 get_chinook_data <- function(Sheets){
   
-  Chinook_Raw_Data <- read_excel("Data/2018 Chinook Total Mortality Distribution.xlsx",
+  Chinook_Raw_Data <- read_excel("/Volumes/Enterprise/Data/NRCAN_chapter/Species_Data/2018 Chinook Total Mortality Distribution.xlsx",
                              sheet = Sheets, col_names = FALSE)
   
   colnames(Chinook_Raw_Data) <- as.character(seq(1:33))

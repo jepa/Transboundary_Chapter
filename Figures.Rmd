@@ -702,7 +702,7 @@ Fishery_to_Country <- tibble(
 
 # Load Fishery Acronyms
 
-Acronyms <- read_excel("Data/2018 Chinook Total Mortality Distribution.xlsx",
+Acronyms <- read_excel("/Volumes/Enterprise/Data/NRCAN_chapter/Species_Data/2018 Chinook Total Mortality Distribution.xlsx",
                        sheet = "Fisheries", col_names = TRUE) %>% 
   arrange(Region) %>% 
   mutate(Sheet = paste(StockAcronym,"total mort")) %>% 
