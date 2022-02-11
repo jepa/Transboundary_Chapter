@@ -4,3 +4,7 @@ This repository supports the transboundary resource management section of the In
 
 # Chapter Authors
 Wabnitz, C. and  Palacios-Abrantes, J.
+
+# Reference
+
+Eyzaguirre, J., Morton, C., Wabnitz, C., Copage, M. and McLeman, R. (2021): International Dimensions; Chapter 9 in Canada in a Changing Climate: National Issues Report, (ed.) F.J. Warren and N. Lulham; Government of Canada, Ottawa, Ontario.
